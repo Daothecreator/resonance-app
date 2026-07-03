@@ -1,1 +1,370 @@
-qr-generator.html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Resonance Vortex QR Generator</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: #050505;
+      color: #FFB366;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    .container {
+      text-align: center;
+      max-width: 800px;
+      width: 100%;
+    }
+    h1 {
+      font-weight: 300;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+      font-size: 24px;
+    }
+    .subtitle {
+      color: #888;
+      font-size: 13px;
+      margin-bottom: 30px;
+      letter-spacing: 2px;
+    }
+    .controls {
+      display: flex;
+      gap: 10px;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-bottom: 25px;
+    }
+    input[type="text"] {
+      background: #111;
+      border: 1px solid #333;
+      color: #FFB366;
+      padding: 12px 16px;
+      border-radius: 8px;
+      width: 320px;
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.3s;
+    }
+    input[type="text"]:focus {
+      border-color: #FFB366;
+    }
+    input[type="text"]::placeholder {
+      color: #666;
+    }
+    button {
+      background: #FFB366;
+      color: #050505;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 8px;
+      font-weight: 700;
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    button:hover {
+      background: #ffcc99;
+      transform: translateY(-1px);
+    }
+    button:active {
+      transform: translateY(0);
+    }
+    #canvas-wrap {
+      position: relative;
+      display: inline-block;
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 0 40px rgba(255, 179, 102, 0.1);
+    }
+    canvas {
+      display: block;
+      background: #050505;
+    }
+    #hidden-qr { display: none; }
+    .status {
+      margin-top: 15px;
+      font-size: 12px;
+      color: #666;
+      min-height: 18px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Resonance</h1>
+    <div class="subtitle">Vortex QR Generator</div>
+    
+    <div class="controls">
+      <input type="text" id="url-input" placeholder="https://resonance-app.pages.dev" value="https://resonance-app.pages.dev">
+      <button onclick="generateVortexQR()">Generate</button>
+      <button onclick="downloadPNG()">Download PNG</button>
+    </div>
+    
+    <div id="canvas-wrap">
+      <canvas id="main-canvas" width="700" height="700"></canvas>
+    </div>
+    
+    <div class="status" id="status"></div>
+    <div id="hidden-qr"></div>
+  </div>
+
+  <script>
+    const mainCanvas = document.getElementById('main-canvas');
+    const mainCtx = mainCanvas.getContext('2d');
+    const hiddenDiv = document.getElementById('hidden-qr');
+    const statusEl = document.getElementById('status');
+    
+    // Generate on load
+    window.onload = () => generateVortexQR();
+    
+    function setStatus(msg) {
+      statusEl.textContent = msg;
+    }
+    
+    function generateVortexQR() {
+      const url = document.getElementById('url-input').value.trim() || 'https://resonance-app.pages.dev';
+      setStatus('Generating vortex QR...');
+      
+      // Clear hidden container
+      hiddenDiv.innerHTML = '';
+      
+      // Generate standard QR in hidden div (large size for clean analysis)
+      new QRCode(hiddenDiv, {
+        text: url,
+        width: 512,
+        height: 512,
+        colorDark: '#000000',
+        colorLight: '#ffffff',
+        correctLevel: QRCode.CorrectLevel.H
+      });
+      
+      // Wait for QRCode.js to render
+      setTimeout(() => {
+        const hiddenCanvas = hiddenDiv.querySelector('canvas');
+        if (!hiddenCanvas) {
+          setStatus('Error: QR canvas not rendered');
+          return;
+        }
+        
+        const qrCtx = hiddenCanvas.getContext('2d');
+        const w = hiddenCanvas.width;
+        const h = hiddenCanvas.height;
+        const imgData = qrCtx.getImageData(0, 0, w, h);
+        
+        // Analyze the QR structure from the rendered canvas
+        const analysis = analyzeQR(imgData.data, w, h);
+        if (!analysis) {
+          setStatus('Error: Could not analyze QR structure');
+          return;
+        }
+        
+        drawQR(mainCtx, mainCanvas.width, mainCanvas.height, analysis, url);
+        setStatus('Ready. Point scanner at the code.');
+      }, 150);
+    }
+    
+    function analyzeQR(data, w, h) {
+      // 1. Find the very first dark pixel (top-left finder pattern start)
+      let firstY = -1, firstX = -1;
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const idx = (y * w + x) * 4;
+          if (data[idx] < 128) { // dark
+            firstY = y;
+            firstX = x;
+            break;
+          }
+        }
+        if (firstY !== -1) break;
+      }
+      if (firstY === -1) return null;
+      
+      // 2. Determine cell size from the first horizontal dark run
+      //    The top-left finder pattern starts with 7 dark modules in a row
+      let darkRun = 0;
+      let x = firstX;
+      while (x < w && data[(firstY * w + x) * 4] < 128) {
+        darkRun++;
+        x++;
+      }
+      const cellSize = Math.round(darkRun / 7);
+      if (cellSize < 1) return null;
+      
+      // 3. Find bounding box of all dark pixels (includes quiet zone if present)
+      let minX = w, minY = h, maxX = 0, maxY = 0;
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const idx = (y * w + x) * 4;
+          if (data[idx] < 128) {
+            if (x < minX) minX = x;
+            if (y < minY) minY = y;
+            if (x > maxX) maxX = x;
+            if (y > maxY) maxY = y;
+          }
+        }
+      }
+      
+      // 4. Calculate module count from the exact pixel dimensions
+      const moduleCount = Math.round((maxX - minX + 1) / cellSize);
+      if (moduleCount < 21) return null;
+      
+      return {
+        data, w, h,
+        cellSize,
+        moduleCount,
+        offsetX: minX,
+        offsetY: minY
+      };
+    }
+    
+    function isDark(moduleX, moduleY, analysis) {
+      // Map module coordinates to the corresponding pixel in the hidden QR canvas
+      const px = analysis.offsetX + moduleX * analysis.cellSize + analysis.cellSize / 2;
+      const py = analysis.offsetY + moduleY * analysis.cellSize + analysis.cellSize / 2;
+      const idx = (Math.floor(py) * analysis.w + Math.floor(px)) * 4;
+      return analysis.data[idx] < 128;
+    }
+    
+    function drawQR(ctx, width, height, analysis, url) {
+      // Background
+      ctx.fillStyle = '#050505';
+      ctx.fillRect(0, 0, width, height);
+      
+      const cx = width / 2;
+      const cy = height / 2;
+      
+      // Draw ambient particle vortex background
+      drawParticles(ctx, width, height);
+      
+      // QR display parameters
+      const mc = analysis.moduleCount;
+      const qrDisplaySize = Math.min(width, height) * 0.75;
+      const modulePixelSize = qrDisplaySize / mc;
+      const qrOffset = (Math.min(width, height) - qrDisplaySize) / 2;
+      
+      // Draw each module as an amber dot
+      for (let row = 0; row < mc; row++) {
+        for (let col = 0; col < mc; col++) {
+          if (!isDark(col, row, analysis)) continue;
+          
+          // Standard grid position
+          const stdX = qrOffset + col * modulePixelSize + modulePixelSize / 2;
+          const stdY = qrOffset + row * modulePixelSize + modulePixelSize / 2;
+          
+          // Relative to canvas center
+          const relX = stdX - cx;
+          const relY = stdY - cy;
+          const dist = Math.sqrt(relX * relX + relY * relY);
+          const maxDist = Math.sqrt(cx * cx + cy * cy);
+          const angle = Math.atan2(relY, relX);
+          
+          // Vortex twist: Gaussian-like falloff centered at ~35% of max radius
+          // Stronger twist in the middle, weaker near edges where finders live
+          const twist = 0.22 * Math.exp(-Math.pow(dist - maxDist * 0.35, 2) / (2 * Math.pow(maxDist * 0.35, 2)));
+          const newAngle = angle + twist;
+          
+          const finalX = cx + dist * Math.cos(newAngle);
+          const finalY = cy + dist * Math.sin(newAngle);
+          
+          // Dot radius
+          const dotR = modulePixelSize * 0.35;
+          
+          // Protect finder patterns and timing patterns from strong distortion
+          // so scanners can still locate the QR code reliably
+          const isFinder = (row < 8 && col < 8) || 
+                           (row < 8 && col >= mc - 8) || 
+                           (row >= mc - 8 && col < 8);
+          const isTiming = (row === 6 && col >= 8 && col < mc - 8) || 
+                           (col === 6 && row >= 8 && row < mc - 8);
+          
+          let drawX = finalX, drawY = finalY;
+          if (isFinder || isTiming) {
+            // Keep structural elements nearly on-grid
+            const softTwist = twist * 0.15;
+            const softAngle = angle + softTwist;
+            drawX = cx + dist * Math.cos(softAngle);
+            drawY = cy + dist * Math.sin(softAngle);
+          }
+          
+          // Draw amber dot
+          ctx.beginPath();
+          ctx.arc(drawX, drawY, dotR, 0, Math.PI * 2);
+          ctx.fillStyle = '#FFB366';
+          ctx.fill();
+        }
+      }
+      
+      // Draw the Resonance logo (concentric circles) over the center
+      // With correction level H, covering ~20% of the center is safe
+      drawLogo(ctx, cx, cy, qrDisplaySize * 0.22);
+    }
+    
+    function drawParticles(ctx, w, h) {
+      const cx = w / 2;
+      const cy = h / 2;
+      const count = 500;
+      
+      for (let i = 0; i < count; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const r = Math.random() * Math.min(w, h) * 0.55;
+        const px = cx + r * Math.cos(angle);
+        const py = cy + r * Math.sin(angle);
+        const opacity = 0.04 + Math.random() * 0.12;
+        const size = 0.5 + Math.random() * 2;
+        
+        ctx.beginPath();
+        ctx.arc(px, py, size, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(255, 179, 102, ${opacity})`;
+        ctx.fill();
+      }
+    }
+    
+    function drawLogo(ctx, cx, cy, size) {
+      ctx.save();
+      ctx.translate(cx, cy);
+      
+      // Soft glow behind the logo
+      ctx.shadowColor = 'rgba(255, 179, 102, 0.5)';
+      ctx.shadowBlur = 30;
+      
+      // Concentric circles representing "Resonance"
+      const rings = 4;
+      for (let i = 1; i <= rings; i++) {
+        const r = (size / 2) * (i / rings);
+        ctx.beginPath();
+        ctx.arc(0, 0, r, 0, Math.PI * 2);
+        ctx.strokeStyle = '#FFB366';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
+      
+      // Center nucleus dot
+      ctx.beginPath();
+      ctx.arc(0, 0, size * 0.06, 0, Math.PI * 2);
+      ctx.fillStyle = '#FFB366';
+      ctx.fill();
+      
+      ctx.restore();
+    }
+    
+    function downloadPNG() {
+      const link = document.createElement('a');
+      link.download = 'resonance-vortex-qr.png';
+      link.href = mainCanvas.toDataURL('image/png');
+      link.click();
+      setStatus('Downloaded: resonance-vortex-qr.png');
+    }
+  </script>
+</body>
+</html>
