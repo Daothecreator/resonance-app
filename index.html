@@ -953,6 +953,10 @@
       '432': '&#x266B;', '40hz': '&#x03B3;', binaural: '&#x266D;&#x266F;', research: '&#x269B;'
     };
 
+    // Expose for external access
+    window.MODE_ORDER = MODE_ORDER;
+    window.MODE_ICONS = MODE_ICONS;
+
     function renderModeCards() {
       const grid = document.getElementById('mode-grid');
       if (!grid) return;
@@ -1079,12 +1083,20 @@
 
     // ==================== INIT ====================
     (async function init() {
-      await loadTranslations();
+      try {
+        await Promise.race([loadTranslations(), new Promise(r => setTimeout(r, 1500))]);
+      } catch(e) {}
       renderModeCards();
       applyLanguage('en');
       setVolume(70);
-      // Restore default timer
       selectTimerPreset(15);
+      // Fallback: if cards still not rendered after 2s, try again
+      setTimeout(() => {
+        const grid = document.getElementById('mode-grid');
+        if (grid && grid.children.length === 0) {
+          renderModeCards();
+        }
+      }, 2000);
     })();
   </script>
 </body>
